@@ -1,4 +1,4 @@
-// Token Radar's dashboard, radar-3. It reads window.RADAR (written beside dashboard/ by
+// Token Radar's dashboard, radar-4. It reads window.RADAR (written beside dashboard/ by
 // main.ts) and renders the ranked board, a filterable table, a top-five strip, a per-protocol
 // detail dialog with the model's own inputs and the protocol's farm plan, and the live-token
 // view. No network: every byte it shows is in data.js. No framework, no fetch.
@@ -67,7 +67,8 @@
     var growthMult = 1 + (growth / 100) * model.growth_weight;
     var age = row.age_days == null ? model.unknown_age_days : row.age_days;
     var maturity = model.maturity_floor + (Math.min(Math.max(age, 0), model.maturity_days) / model.maturity_days) * model.maturity_range;
-    return Math.max(1, Math.round(row.tvl_usd * multipleOf(row) * growthMult * maturity * chainMultOf(row, model)));
+    var quality = row.change_7d == null ? model.data_quality_discount : 1;
+    return Math.max(1, Math.round(row.tvl_usd * multipleOf(row) * growthMult * maturity * chainMultOf(row, model) * quality));
   }
 
   /** One sentence saying why this row ranks where it does, from its own inputs. */
@@ -134,6 +135,7 @@
     return [
       { text: 'Use a fresh wallet that holds only the funds you plan to farm, and keep its seed phrase offline.', cost: 'under $3 of gas for the first transaction', time: '5 minutes' },
       { text: "Open " + p.name + "'s own site and docs from its official links and check it has no token yet, no pre-sale and no paid claim; a site asking you to pay to claim is a fake.", cost: 'nothing to check', time: '10 minutes' },
+      { text: "Check whether " + p.name + "'s contracts have a public audit and how long its TVL has held above $" + Math.round(p.tvl_usd / 1e6) + "M; an unaudited contract or a TVL that appeared last week deserves a smaller position.", cost: 'nothing to check', time: '10 minutes' },
       { text: actionFor(p, capital, chain), cost: '$' + capital + ' of capital and about $' + (capital >= 150 ? 8 : 4) + ' of gas', time: '15 minutes to set up' },
       { text: "Open " + p.name + "'s points or rewards page and confirm the action you just took counts toward its program, and which actions earn the most points.", cost: 'nothing to check', time: '10 minutes' },
       { text: 'Make one qualifying action each week, such as a deposit, a borrow, a swap or a vote.', cost: 'about $2 of gas a week', time: '10 minutes a week' },
@@ -141,6 +143,7 @@
       second,
       { text: "Before you withdraw, open the protocol's own points or rewards page and claim only from the link it publishes.", cost: 'no fee to check, and never pay to claim', time: '10 minutes' },
       { text: 'Plan the exit now: when the token launches, unwind in two or three tranches over a week instead of selling everything in one trade.', cost: 'about $2 of gas per tranche', time: '10 minutes to set the plan' },
+      { text: 'Put a reminder in your calendar for the next snapshot date, so the position is still open and active when it is taken.', cost: 'nothing', time: '2 minutes' },
       { text: 'Write the wallet, the dates and every transaction in a farm log so you can repeat the position or unwind it.', cost: 'nothing but the log', time: '5 minutes' }
     ].map(stepText);
   }
@@ -240,7 +243,7 @@
         el('div', { class: 'fact' }, el('span', { text: 'Pre-token rows scored' }), el('b', { text: String(DATA.board_size) })),
         el('div', { class: 'fact' }, el('span', { text: 'Early rows below the floor' }), el('b', { text: String(DATA.early_size) })),
         el('div', { class: 'fact' }, el('span', { text: 'Live-token protocols set aside' }), el('b', { text: String(DATA.live_size) })),
-        el('div', { class: 'fact' }, el('span', { text: 'Farm steps per protocol' }), el('b', { text: '10' }))
+        el('div', { class: 'fact' }, el('span', { text: 'Farm steps per protocol' }), el('b', { text: '12' }))
       )
     );
   }
@@ -382,14 +385,37 @@
       el('h2', { text: 'How implied value is computed' }),
       el('p', { class: 'sub', text: 'Every row is scored by one function of the snapshot figures. No protocol name is special-cased, and no row is hand-picked.' }),
       el('div', { class: 'formula' },
-        'implied = round( tvl_usd x category_multiple x (1 + clamp(change_7d, ' + m.growth_floor + ', ' + m.growth_cap + ') / 100 x ' + m.growth_weight + ') x (' + m.maturity_floor + ' + min(age_days, ' + m.maturity_days + ') / ' + m.maturity_days + ' x ' + m.maturity_range + ') x (1 + min(chains - 1, 3) x ' + m.chain_bonus + ') )'
+        'implied = round( tvl_usd x category_multiple x (1 + clamp(change_7d, ' + m.growth_floor + ', ' + m.growth_cap + ') / 100 x ' + m.growth_weight + ') x (' + m.maturity_floor + ' + min(age_days, ' + m.maturity_days + ') / ' + m.maturity_days + ' x ' + m.maturity_range + ') x (1 + min(chains - 1, 3) x ' + m.chain_bonus + ') x data_quality )'
       ),
       el('p', { class: 'sub', text: 'TVL and seven-day growth come from the snapshot. Age is the time since the protocol was first listed, the best record of how long it has run with no token; an unlisted age uses ' + m.unknown_age_days + ' days. The growth clamp is asymmetric on purpose: a protocol losing TVL is marked down harder than a growing one is marked up, because a launch prices momentum and a shrinking pool prices flight. The chain premium is small by design — at most 1.09x — because extra chains are a second chance to be counted, not a second protocol.' }),
-      el('p', { class: 'sub', text: 'Category multiple: the median market-cap / TVL of that category\u2019s live-token protocols in this snapshot, winsorised to 0.10–0.45. A category with fewer than 3 live comparables uses the house multiple 0.25. The count beside each multiple is how many live protocols it rests on — a multiple built on 20 comparables is firmer than one built on 3.' }),
+      el('p', { class: 'sub', text: 'Category multiple: the TVL-weighted median market-cap / TVL of that category\u2019s live-token protocols in this snapshot, winsorised to 0.10–0.45 — weighted so the protocols holding the category\u2019s money price it, not its smallest names. A category with fewer than 3 live comparables uses the house multiple 0.25. The count beside each multiple is how many live protocols it rests on — a multiple built on 20 comparables is firmer than one built on 3. Data quality is 0.97 when the snapshot carries no seven-day change for a protocol, 1 otherwise: a row scored on missing data is worth slightly less, and its detail dialog says so.' }),
       el('div', { class: 'mults' }, cats.map(function (c) {
         var n = comps[c];
         return el('span', { class: 'mult', text: c + ' ' + mults[c].toFixed(2) + 'x' + (typeof n === 'number' ? ' (n=' + n + ')' : '') });
       }))
+    );
+  }
+
+  /** The fastest gainers and losers on the board, by seven-day TVL change. */
+  function moversPanel() {
+    var withChange = DATA.rows.filter(function (r) { return r.change_7d !== null && isFinite(r.change_7d); });
+    if (withChange.length === 0) return null;
+    var gainers = withChange.slice().sort(function (a, b) { return b.change_7d - a.change_7d; }).slice(0, 5);
+    var losers = withChange.slice().sort(function (a, b) { return a.change_7d - b.change_7d; }).slice(0, 5);
+    function mover(r, cls) {
+      return el('button', { type: 'button', class: 'cat-card', onclick: function () { openDetail(r.slug); } },
+        el('b', { text: r.name }),
+        el('span', { class: 'sub', text: (r.category || 'Other') + ' · TVL ' + money(r.tvl_usd) }),
+        el('span', { class: 'num ' + cls, text: pct(r.change_7d) })
+      );
+    }
+    return el('section', { class: 'panel model', 'aria-label': 'Biggest movers' },
+      el('h2', { text: 'Biggest movers in seven days' }),
+      el('p', { class: 'sub', text: 'Momentum is half the model, so these are the rows whose rank moved most on the latest snapshot. A gainer here is a protocol the market is already rewarding; a loser is one the model is already marking down.' }),
+      el('h3', { text: 'Gaining TVL' }),
+      el('div', { class: 'cats' }, gainers.map(function (r) { return mover(r, 'pos'); })),
+      el('h3', { text: 'Losing TVL' }),
+      el('div', { class: 'cats' }, losers.map(function (r) { return mover(r, 'neg'); }))
     );
   }
 
@@ -445,6 +471,7 @@
         el('div', null, el('span', { text: 'Growth multiplier' }), el('b', { class: 'num', text: String(row.growth_multiplier) })),
         el('div', null, el('span', { text: 'Maturity multiplier' }), el('b', { class: 'num', text: String(row.maturity_multiplier) })),
         el('div', null, el('span', { text: 'Chain multiplier' }), el('b', { class: 'num', text: String(row.chain_multiplier) })),
+        el('div', null, el('span', { text: 'Data quality' }), el('b', { class: 'num', text: String(row.data_quality_multiplier) + (row.change_7d === null ? ' — no seven-day change on record' : '') })),
         el('div', null, el('span', { text: 'Implied value' }), el('b', { class: 'num', text: money(row.implied_value_usd) }))
       ),
       el('p', { class: 'sub', text: whyRank(row) }),
@@ -475,6 +502,7 @@
     shell.appendChild(controls());
     shell.appendChild(state.tab === 'pre-token' ? boardTable() : liveTable());
     if (state.tab === 'pre-token') {
+      shell.appendChild(moversPanel());
       shell.appendChild(categoryPanel());
       shell.appendChild(modelPanel());
     }

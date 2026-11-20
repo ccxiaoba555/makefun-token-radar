@@ -1,4 +1,4 @@
-// Token Radar's model, radar-3: one snapshot of the protocol universe in, one ranked board out.
+// Token Radar's model, radar-4: one snapshot of the protocol universe in, one ranked board out.
 //
 // The board's floor is the watchlist: every slug in it is ranked. Below the floor, the early
 // radar adds pre-token protocols by TVL, up to EARLY_ROWS. A protocol is pre-token when its
@@ -22,7 +22,10 @@
 //   chains     1 + 0.03 x min(chains - 1, 3): a protocol live on several chains has more
 //              than one home to farm and more than one snapshot to be counted in, so each
 //              extra chain is worth a small premium, capped at three.
-//   implied    max(1, round(base x growthMult x maturity x chains))
+//   quality    0.97 when the snapshot carries no seven-day change for the protocol, 1
+//              otherwise: a row scored on missing data is worth slightly less than one
+//              scored on a full record, and the dashboard says so on the row.
+//   implied    max(1, round(base x growthMult x maturity x chains x quality))
 //
 // A single flat multiple would let the biggest TVL in the cheapest category win by default.
 // The snapshot itself says categories do not trade alike: before winsorising, the live-token
@@ -37,6 +40,14 @@
 // check and a second-chain repeat, the two steps farmers most often skip; and the dashboard
 // now prints the live-comparable count behind every category multiple, so a multiple resting
 // on 2 protocols is not mistaken for one resting on 20.
+//
+// What radar-4 changes over radar-3: the category multiple is now a TVL-weighted median
+// instead of a plain median, so a category is priced by the protocols that hold its money
+// rather than by its smallest names; a missing seven-day change costs the row 3% instead
+// of being silently treated as zero growth; the farm plan grows from 10 steps to 12,
+// adding an audit check and a snapshot-calendar reminder; and the dashboard gains a
+// biggest-movers panel, so a farmer can see at a glance which ranked protocols are gaining
+// TVL fastest and which are bleeding it.
 
 /** One protocol entry, exactly the ten fields the sealed input carries. */
 export interface SnapshotProtocol {
@@ -73,6 +84,7 @@ export interface ModelConstants {
   unknown_age_days: number;
   chain_bonus: number;
   chain_bonus_cap: number;
+  data_quality_discount: number;
 }
 
 export const MODEL: ModelConstants = {
@@ -86,10 +98,11 @@ export const MODEL: ModelConstants = {
   unknown_age_days: 365,
   chain_bonus: 0.03,
   chain_bonus_cap: 0.09,
+  data_quality_discount: 0.97,
 };
 
 /** The model's version label: the dashboard names it. */
-export const MODEL_VERSION = 'radar-3';
+export const MODEL_VERSION = 'radar-4';
 
 /** The winsorising band for a category multiple, and how many live comparables earn one. */
 export const MULT_MIN = 0.1;
@@ -131,6 +144,7 @@ export interface BoardRow {
     growth_multiplier: number;
     maturity_multiplier: number;
     chain_multiplier: number;
+    data_quality_multiplier: number;
     age_days: number | null;
   };
   farm_steps: string[];
@@ -154,6 +168,7 @@ export interface RadarRow {
   growth_multiplier: number;
   maturity_multiplier: number;
   chain_multiplier: number;
+  data_quality_multiplier: number;
 }
 
 /** A live-token protocol: the market's own value, not a model's. */
@@ -251,18 +266,53 @@ export function isRankable(p: SnapshotProtocol): boolean {
 }
 
 /**
- * Every category's multiple, from the snapshot's own live-token protocols: the median
- * market-cap / TVL of that category's live protocols, winsorised to [MULT_MIN, MULT_MAX],
- * together with how many live comparables each multiple rests on. Entries with no market
- * cap — a dead or untracked token — are left out: they would drag every category toward
- * zero and say nothing about what a trading protocol there is worth. A category with fewer
- * than MIN_COMPS live comparables gets no entry here and falls back to the house multiple.
- * Multiples are rounded to 3 decimals so the board and the dashboard print the same number.
+ * Every category's multiple, from the snapshot's own live-token protocols: the TVL-weighted
+ * median market-cap / TVL of that category's live protocols, winsorised to [MULT_MIN,
+ * MULT_MAX], together with how many live comparables each multiple rests on. Weighting by
+ * TVL means a category is priced by the protocols that hold its money: a plain median lets
+ * a dozen tiny protocols outvote the one that holds 90% of the category's TVL. Entries
+ * with no market cap — a dead or untracked token — are left out: they would drag every
+ * category toward zero and say nothing about what a trading protocol there is worth. A
+ * category with fewer than MIN_COMPS live comparables gets no entry here and falls back to
+ * the house multiple. Multiples are rounded to 3 decimals so the board and the dashboard
+ * print the same number.
  */
 export function categoryStats(
   snapshot: Snapshot,
   model: ModelConstants = MODEL,
 ): { multiples: Map<string, number>; comps: Map<string, number> } {
+  const byCat = new Map<string, { ratio: number; tvl: number }[]>();
+  for (const p of snapshot.protocols) {
+    if (p.mcap_usd === null || p.category === null || p.category === 'CEX') continue;
+    if (!(p.tvl_usd > 0) || !(p.mcap_usd > 0)) continue;
+    const list = byCat.get(p.category) ?? [];
+    list.push({ ratio: p.mcap_usd / p.tvl_usd, tvl: p.tvl_usd });
+    byCat.set(p.category, list);
+  }
+  const multiples = new Map<string, number>();
+  const comps = new Map<string, number>();
+  for (const [cat, entries] of byCat) {
+    comps.set(cat, entries.length);
+    if (entries.length < MIN_COMPS) continue;
+    entries.sort((a, b) => a.ratio - b.ratio);
+    const total = entries.reduce((n, e) => n + e.tvl, 0);
+    let acc = 0;
+    let weighted = entries[entries.length - 1]!.ratio;
+    for (const e of entries) {
+      acc += e.tvl;
+      if (acc >= total / 2) {
+        weighted = e.ratio;
+        break;
+      }
+    }
+    const m = Math.min(MULT_MAX, Math.max(MULT_MIN, weighted));
+    multiples.set(cat, Math.round(m * 1000) / 1000);
+  }
+  return { multiples, comps };
+}
+
+/** The plain median of a category's ratios, for the dashboard's comparison note. */
+export function categoryMedianMultiple(snapshot: Snapshot): Map<string, number> {
   const byCat = new Map<string, number[]>();
   for (const p of snapshot.protocols) {
     if (p.mcap_usd === null || p.category === null || p.category === 'CEX') continue;
@@ -271,16 +321,13 @@ export function categoryStats(
     list.push(p.mcap_usd / p.tvl_usd);
     byCat.set(p.category, list);
   }
-  const multiples = new Map<string, number>();
-  const comps = new Map<string, number>();
+  const out = new Map<string, number>();
   for (const [cat, ratios] of byCat) {
-    comps.set(cat, ratios.length);
     if (ratios.length < MIN_COMPS) continue;
     ratios.sort((a, b) => a - b);
-    const m = Math.min(MULT_MAX, Math.max(MULT_MIN, middle(ratios)));
-    multiples.set(cat, Math.round(m * 1000) / 1000);
+    out.set(cat, Math.round(Math.min(MULT_MAX, Math.max(MULT_MIN, middle(ratios))) * 1000) / 1000);
   }
-  return { multiples, comps };
+  return out;
 }
 
 /** Every category's multiple, from the snapshot's own live-token protocols. */
@@ -309,7 +356,7 @@ export function impliedValue(
   asOf: string,
   model: ModelConstants,
   multiples?: Map<string, number>,
-): { implied: number; growthPct: number; growthMult: number; maturityMult: number; chainMult: number; age: number | null; multiple: number } {
+): { implied: number; growthPct: number; growthMult: number; maturityMult: number; chainMult: number; qualityMult: number; age: number | null; multiple: number } {
   const age = ageDays(asOf, protocol.listed_at);
   const growthPct = Math.min(model.growth_cap, Math.max(model.growth_floor, numOr(protocol.change_7d, 0)));
   const growthMult = 1 + (growthPct / 100) * model.growth_weight;
@@ -317,9 +364,10 @@ export function impliedValue(
   const maturityMult =
     model.maturity_floor + (Math.min(Math.max(ageForModel, 0), model.maturity_days) / model.maturity_days) * model.maturity_range;
   const chainMult = chainMultiplier(protocol, model);
+  const qualityMult = protocol.change_7d === null ? model.data_quality_discount : 1;
   const multiple = multiples === undefined ? model.base_multiple : multipleFor(protocol, multiples, model);
-  const implied = Math.max(1, Math.round(protocol.tvl_usd * multiple * growthMult * maturityMult * chainMult));
-  return { implied, growthPct, growthMult, maturityMult, chainMult, age, multiple };
+  const implied = Math.max(1, Math.round(protocol.tvl_usd * multiple * growthMult * maturityMult * chainMult * qualityMult));
+  return { implied, growthPct, growthMult, maturityMult, chainMult, qualityMult, age, multiple };
 }
 
 /** The snapshot's protocol by slug. */
@@ -374,14 +422,15 @@ export function stepText(step: FarmStep): string {
 }
 
 /**
- * A protocol's farm plan: ten steps, each an action with a cost and a time, derived from the
+ * A protocol's farm plan: twelve steps, each an action with a cost and a time, derived from the
  * protocol's own record (category, chains, TVL, age) — never from a hand-written list of names.
- * Three of the steps are the ones that lose farmers money when they are missing: verify the
+ * Four of the steps are the ones that lose farmers money when they are missing: verify the
  * protocol before any deposit, because a fake site or a paid claim is the usual trap; check
- * the points program before farming, because an action the program does not count is wasted
- * effort; and plan the exit before the token exists, unwinding in tranches instead of one
- * market sell. Multi-chain protocols get a repeat step on their second chain, because a
- * second chain is a second snapshot to be counted in.
+ * the protocol's audits, because an unaudited contract holding the farm's capital is the
+ * risk no points program repays; check the points program before farming, because an action
+ * the program does not count is wasted effort; and plan the exit before the token exists,
+ * unwinding in tranches instead of one market sell. Multi-chain protocols get a repeat step
+ * on their second chain, because a second chain is a second snapshot to be counted in.
  */
 export function farmSteps(p: SnapshotProtocol, age: number | null): FarmStep[] {
   const chain = chainOf(p);
@@ -396,6 +445,11 @@ export function farmSteps(p: SnapshotProtocol, age: number | null): FarmStep[] {
     },
     {
       text: `Open ${p.name}'s own site and docs from its official links and check it has no token yet, no pre-sale and no paid claim; a site asking you to pay to claim is a fake.`,
+      cost: 'nothing to check',
+      time: '10 minutes',
+    },
+    {
+      text: `Check whether ${p.name}'s contracts have a public audit and how long its TVL has held above $${Math.round(p.tvl_usd / 1e6)}M; an unaudited contract or a TVL that appeared last week deserves a smaller position.`,
       cost: 'nothing to check',
       time: '10 minutes',
     },
@@ -439,6 +493,11 @@ export function farmSteps(p: SnapshotProtocol, age: number | null): FarmStep[] {
       text: `Plan the exit now: when the token launches, unwind in two or three tranches over a week instead of selling everything in one trade.`,
       cost: 'about $2 of gas per tranche',
       time: '10 minutes to set the plan',
+    },
+    {
+      text: `Put a reminder in your calendar for the next snapshot date, so the position is still open and active when it is taken.`,
+      cost: 'nothing',
+      time: '2 minutes',
     },
     {
       text: `Write the wallet, the dates and every transaction in a farm log so you can repeat the position or unwind it.`,
@@ -493,6 +552,7 @@ export function buildBoard(snapshot: Snapshot, model: ModelConstants = MODEL): B
       growth_multiplier: r4(s.growthMult),
       maturity_multiplier: r4(s.maturityMult),
       chain_multiplier: r4(s.chainMult),
+      data_quality_multiplier: r4(s.qualityMult),
       age_days: s.age,
     },
     farm_steps: farmSteps(s.p, s.age).map(stepText),
@@ -535,6 +595,7 @@ export function radarRow(row: BoardRow, watchlist: Set<string>): RadarRow {
     growth_multiplier: row.model.growth_multiplier,
     maturity_multiplier: row.model.maturity_multiplier,
     chain_multiplier: row.model.chain_multiplier,
+    data_quality_multiplier: row.model.data_quality_multiplier,
   };
 }
 
