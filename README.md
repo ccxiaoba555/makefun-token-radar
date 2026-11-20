@@ -8,7 +8,7 @@ A token radar for pre-token protocols: it reads a sealed DefiLlama snapshot, ran
 watchlist protocol by implied value, adds the early radar below the watchlist floor, and
 renders a static dashboard with a per-protocol farm plan. Node 22, standard library only.
 
-## The model (radar-2)
+## The model (radar-3)
 
 Implied value is computed from the snapshot's own figures only:
 
@@ -16,19 +16,36 @@ Implied value is computed from the snapshot's own figures only:
 multiple   = median live-token market-cap / TVL of the protocol's category,
              winsorised to [0.10, 0.45]; categories with fewer than 3 live
              comparables fall back to the house multiple 0.25
-implied    = round( tvl_usd x multiple x (1 + clamp(change_7d, -60, 120) / 100 x 0.5)
-             x (0.6 + min(age_days, 1095) / 1095 x 0.4) )
+growth     = clamp(change_7d, -50, 100), in per cent
+implied    = round( tvl_usd x multiple x (1 + growth / 100 x 0.6)
+             x (0.6 + min(age_days, 1095) / 1095 x 0.4)
+             x (1 + min(chains - 1, 3) x 0.03) )
 ```
 
-A flat multiple would let the biggest TVL in the cheapest category win by default. In this
-snapshot the live-token medians run from about 0.03 (liquid staking) to about 0.34 (DEXs)
-before winsorising, so each category is scored at its own market's multiple. No protocol
-name is ever special-cased: the same function scores every row.
+Three judgements sit inside that one line, and the dashboard states all three:
+
+1. **Categories do not trade alike.** A flat multiple would let the biggest TVL in the
+   cheapest category win by default. In this snapshot the live-token medians run from about
+   0.03 (liquid staking) to about 0.34 (DEXs) before winsorising, so each category is scored
+   at its own market's multiple — and the dashboard prints how many live comparables each
+   multiple rests on, so a multiple built on 20 protocols is not mistaken for one built
+   on 3.
+2. **Momentum is asymmetric.** The growth clamp is -50/+100 with weight 0.6: a protocol
+   losing TVL fast is marked down harder than a growing one is marked up, because a token
+   launch prices momentum and a shrinking pool prices flight.
+3. **Chains are a small premium, not a second protocol.** Each extra chain adds 0.03x,
+   capped at 1.09x: a second chain is a second chance to be counted in a snapshot, not a
+   second protocol to farm.
+
+No protocol name is ever special-cased: the same function scores every row.
 
 The board covers all 40 watchlist protocols plus 186 early rows below the $50M floor
-(226 rows), each with an 8-step farm plan derived from its category, chains, TVL and age —
-including a verify-before-you-deposit step and an exit plan in tranches. Live-token
-protocols are set aside with their market caps shown, never mixed into the ranking.
+(226 rows), each with a 10-step farm plan derived from its category, chains, TVL and age —
+including a verify-before-you-deposit step, a points-program check, a second-chain repeat
+for multi-chain protocols, and an exit plan in tranches. Live-token protocols are set
+aside with their market caps shown, never mixed into the ranking. Every detail dialog
+says in one sentence why its protocol ranks where it does, and recomputes its implied
+value from the snapshot figures so a stale board cannot hide.
 
 ## Run it
 

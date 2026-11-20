@@ -1,14 +1,15 @@
-// Token Radar's dashboard, radar-2. It reads window.RADAR (written beside dashboard/ by
+// Token Radar's dashboard, radar-3. It reads window.RADAR (written beside dashboard/ by
 // main.ts) and renders the ranked board, a filterable table, a top-five strip, a per-protocol
 // detail dialog with the model's own inputs and the protocol's farm plan, and the live-token
 // view. No network: every byte it shows is in data.js. No framework, no fetch.
 //
 // The page recomputes every row's implied value from the snapshot figures with the same
-// arithmetic main.ts used — category multiple, growth clamp, maturity — and says so in the
-// detail dialog when the recomputed number matches the board's (or warns when it does not).
-// The farm plan is generated here from the same derivation main.ts writes to board.json:
-// category, chains, TVL and age decide the action, the capital, the hold and every cost and
-// time. No protocol name is special-cased anywhere.
+// arithmetic main.ts used — category multiple, asymmetric growth clamp, maturity, and the
+// chain-diversity premium — and says so in the detail dialog when the recomputed number
+// matches the board's (or warns when it does not). The farm plan is generated here from the
+// same derivation main.ts writes to board.json: category, chains, TVL and age decide the
+// action, the capital, the hold and every cost and time. No protocol name is special-cased
+// anywhere.
 (function () {
   'use strict';
 
@@ -48,13 +49,37 @@
     return typeof m === 'number' ? m : DATA.model.base_multiple;
   }
 
+  /** How many live-token protocols a category's multiple rests on, or null. */
+  function compsOf(row) {
+    var c = DATA.category_comps && DATA.category_comps[row.category];
+    return typeof c === 'number' ? c : null;
+  }
+
+  /** The chain-diversity premium: 0.03 per extra chain, capped at 0.09. */
+  function chainMultOf(row, model) {
+    var extra = Math.max(0, Math.min(((row.chains || []).length - 1), 3));
+    return 1 + Math.min(extra * model.chain_bonus, model.chain_bonus_cap);
+  }
+
   /** Recompute a row's implied value from the snapshot figures. */
   function impliedOf(row, model) {
     var growth = Math.min(model.growth_cap, Math.max(model.growth_floor, row.change_7d == null ? 0 : row.change_7d));
     var growthMult = 1 + (growth / 100) * model.growth_weight;
     var age = row.age_days == null ? model.unknown_age_days : row.age_days;
     var maturity = model.maturity_floor + (Math.min(Math.max(age, 0), model.maturity_days) / model.maturity_days) * model.maturity_range;
-    return Math.max(1, Math.round(row.tvl_usd * multipleOf(row) * growthMult * maturity));
+    return Math.max(1, Math.round(row.tvl_usd * multipleOf(row) * growthMult * maturity * chainMultOf(row, model)));
+  }
+
+  /** One sentence saying why this row ranks where it does, from its own inputs. */
+  function whyRank(row) {
+    var bits = [];
+    bits.push('a $' + money(row.tvl_usd).replace('$', '') + ' TVL at a ' + multipleOf(row).toFixed(2) + 'x ' + (row.category || 'other') + ' multiple');
+    var comps = compsOf(row);
+    if (comps !== null) bits.push(comps >= 3 ? 'backed by ' + comps + ' live comparables' : 'on only ' + comps + ' live comparables, so the house multiple applies');
+    if (row.change_7d !== null) bits.push(row.change_7d >= 0 ? 'growing ' + pct(row.change_7d) + ' in seven days' : 'shrinking ' + pct(row.change_7d) + ' in seven days');
+    if ((row.chains || []).length > 1) bits.push('live on ' + row.chains.length + ' chains');
+    if (row.age_days !== null) bits.push(row.age_days < 180 ? 'young, with only ' + ageLabel(row.age_days) + ' of history' : 'running for ' + ageLabel(row.age_days));
+    return 'It ranks here on ' + bits.join(', ') + '.';
   }
 
   // ------------------------------------------------------------ farm plans
@@ -102,12 +127,18 @@
     var chain = chainOf(p);
     var capital = capitalFor(p);
     var hold = holdDaysFor(p.age_days);
+    var secondChain = (p.chains && p.chains.length > 1) ? p.chains[1] : null;
+    var second = secondChain === null
+      ? { text: p.name + ' runs on one chain today, so watch its own announcements for a second chain and repeat the qualifying action there when it launches.', cost: 'nothing to watch', time: '5 minutes a week' }
+      : { text: 'Repeat the qualifying action on ' + secondChain + ' as well, so the position is counted on two chains instead of one.', cost: 'about $' + (capital >= 150 ? 8 : 4) + ' of gas for the second position', time: '15 minutes' };
     return [
       { text: 'Use a fresh wallet that holds only the funds you plan to farm, and keep its seed phrase offline.', cost: 'under $3 of gas for the first transaction', time: '5 minutes' },
       { text: "Open " + p.name + "'s own site and docs from its official links and check it has no token yet, no pre-sale and no paid claim; a site asking you to pay to claim is a fake.", cost: 'nothing to check', time: '10 minutes' },
       { text: actionFor(p, capital, chain), cost: '$' + capital + ' of capital and about $' + (capital >= 150 ? 8 : 4) + ' of gas', time: '15 minutes to set up' },
+      { text: "Open " + p.name + "'s points or rewards page and confirm the action you just took counts toward its program, and which actions earn the most points.", cost: 'nothing to check', time: '10 minutes' },
       { text: 'Make one qualifying action each week, such as a deposit, a borrow, a swap or a vote.', cost: 'about $2 of gas a week', time: '10 minutes a week' },
       { text: 'Hold the position for at least ' + hold + ' days so the activity is counted in more than one snapshot.', cost: 'the $' + capital + ' stays in the position', time: hold + ' days' },
+      second,
       { text: "Before you withdraw, open the protocol's own points or rewards page and claim only from the link it publishes.", cost: 'no fee to check, and never pay to claim', time: '10 minutes' },
       { text: 'Plan the exit now: when the token launches, unwind in two or three tranches over a week instead of selling everything in one trade.', cost: 'about $2 of gas per tranche', time: '10 minutes to set the plan' },
       { text: 'Write the wallet, the dates and every transaction in a farm log so you can repeat the position or unwind it.', cost: 'nothing but the log', time: '5 minutes' }
@@ -177,6 +208,7 @@
       else if (key === 'growth') { av = a.change_7d === null ? -Infinity : a.change_7d; bv = b.change_7d === null ? -Infinity : b.change_7d; }
       else if (key === 'age') { av = a.age_days === null ? Infinity : a.age_days; bv = b.age_days === null ? Infinity : b.age_days; }
       else if (key === 'multiple') { av = multipleOf(a); bv = multipleOf(b); }
+      else if (key === 'chains') { av = (a.chains || []).length; bv = (b.chains || []).length; }
       else { av = a.implied_value_usd; bv = b.implied_value_usd; }
       if (av < bv) return -state.dir;
       if (av > bv) return state.dir;
@@ -207,7 +239,8 @@
         el('div', { class: 'fact' }, el('span', { text: 'Watchlist covered' }), el('b', { text: DATA.watchlist_size + ' / ' + DATA.watchlist_size })),
         el('div', { class: 'fact' }, el('span', { text: 'Pre-token rows scored' }), el('b', { text: String(DATA.board_size) })),
         el('div', { class: 'fact' }, el('span', { text: 'Early rows below the floor' }), el('b', { text: String(DATA.early_size) })),
-        el('div', { class: 'fact' }, el('span', { text: 'Live-token protocols set aside' }), el('b', { text: String(DATA.live_size) }))
+        el('div', { class: 'fact' }, el('span', { text: 'Live-token protocols set aside' }), el('b', { text: String(DATA.live_size) })),
+        el('div', { class: 'fact' }, el('span', { text: 'Farm steps per protocol' }), el('b', { text: '10' }))
       )
     );
   }
@@ -224,7 +257,7 @@
           el('span', { class: 'top5-rank', text: '#' + r.rank }),
           el('b', { text: r.name }),
           el('span', { class: 'top5-value', text: money(r.implied_value_usd) }),
-          el('span', { class: 'sub', text: (r.category || 'Other') + ' · ' + multipleOf(r).toFixed(2) + 'x' })
+          el('span', { class: 'sub', text: (r.category || 'Other') + ' · ' + multipleOf(r).toFixed(2) + 'x · ' + ((r.chains || []).length) + ' chain' + ((r.chains || []).length === 1 ? '' : 's') })
         );
       })
     );
@@ -281,7 +314,7 @@
         el('td', { class: 'num', text: String(r.rank) }),
         el('td', null, el('div', { class: 'name' },
           el('b', { text: r.name }),
-          el('span', { class: 'sub', text: (r.category || 'Other') + ' on ' + (r.chains && r.chains.length ? r.chains.slice(0, 2).join(', ') : 'an unnamed chain') })
+          el('span', { class: 'sub', text: (r.category || 'Other') + ' on ' + (r.chains && r.chains.length ? r.chains.slice(0, 2).join(', ') : 'an unnamed chain') + ((r.chains || []).length > 2 ? ' +' + ((r.chains || []).length - 2) : '') })
         )),
         el('td', { class: 'num', text: money(r.tvl_usd) }),
         el('td', { class: 'num ' + growthClass, text: growth }),
@@ -291,6 +324,7 @@
           el('span', { class: 'num', text: money(r.implied_value_usd) })
         )),
         el('td', { class: 'num', text: multipleOf(r).toFixed(2) + 'x' }),
+        el('td', { class: 'num', text: String((r.chains || []).length) }),
         el('td', null, el('span', { class: 'status', text: r.on_watchlist ? 'watchlist' : 'early' }))
       );
       tbody.appendChild(tr);
@@ -307,6 +341,7 @@
             sortHeader('age', 'Age'),
             sortHeader('implied', 'Implied value'),
             sortHeader('multiple', 'Multiple'),
+            sortHeader('chains', 'Chains'),
             el('th', { scope: 'col', text: 'Source' })
           )),
           tbody
@@ -341,35 +376,37 @@
   function modelPanel() {
     var m = DATA.model;
     var mults = DATA.category_multiples || {};
+    var comps = DATA.category_comps || {};
     var cats = Object.keys(mults).sort(function (a, b) { return mults[b] - mults[a]; });
     return el('section', { class: 'panel model' },
       el('h2', { text: 'How implied value is computed' }),
       el('p', { class: 'sub', text: 'Every row is scored by one function of the snapshot figures. No protocol name is special-cased, and no row is hand-picked.' }),
       el('div', { class: 'formula' },
-        'implied = round( tvl_usd x category_multiple x (1 + clamp(change_7d, ' + m.growth_floor + ', ' + m.growth_cap + ') / 100 x ' + m.growth_weight + ') x (' + m.maturity_floor + ' + min(age_days, ' + m.maturity_days + ') / ' + m.maturity_days + ' x ' + m.maturity_range + ') )'
+        'implied = round( tvl_usd x category_multiple x (1 + clamp(change_7d, ' + m.growth_floor + ', ' + m.growth_cap + ') / 100 x ' + m.growth_weight + ') x (' + m.maturity_floor + ' + min(age_days, ' + m.maturity_days + ') / ' + m.maturity_days + ' x ' + m.maturity_range + ') x (1 + min(chains - 1, 3) x ' + m.chain_bonus + ') )'
       ),
-      el('p', { class: 'sub', text: 'TVL and seven-day growth come from the snapshot. Age is the time since the protocol was first listed, the best record of how long it has run with no token; an unlisted age uses ' + m.unknown_age_days + ' days. The early radar is every pre-token protocol below the watchlist floor, by TVL, and the live-token protocols are set aside with their market caps shown.' }),
-      el('p', { class: 'sub', text: 'Category multiple: the median market-cap / TVL of that category\u2019s live-token protocols in this snapshot, winsorised to 0.10–0.45. A category with fewer than 3 live comparables uses the house multiple 0.25.' }),
+      el('p', { class: 'sub', text: 'TVL and seven-day growth come from the snapshot. Age is the time since the protocol was first listed, the best record of how long it has run with no token; an unlisted age uses ' + m.unknown_age_days + ' days. The growth clamp is asymmetric on purpose: a protocol losing TVL is marked down harder than a growing one is marked up, because a launch prices momentum and a shrinking pool prices flight. The chain premium is small by design — at most 1.09x — because extra chains are a second chance to be counted, not a second protocol.' }),
+      el('p', { class: 'sub', text: 'Category multiple: the median market-cap / TVL of that category\u2019s live-token protocols in this snapshot, winsorised to 0.10–0.45. A category with fewer than 3 live comparables uses the house multiple 0.25. The count beside each multiple is how many live protocols it rests on — a multiple built on 20 comparables is firmer than one built on 3.' }),
       el('div', { class: 'mults' }, cats.map(function (c) {
-        return el('span', { class: 'mult', text: c + ' ' + mults[c].toFixed(2) + 'x' });
+        var n = comps[c];
+        return el('span', { class: 'mult', text: c + ' ' + mults[c].toFixed(2) + 'x' + (typeof n === 'number' ? ' (n=' + n + ')' : '') });
       }))
     );
   }
 
-  /** The eight largest categories, each with its row count and its strongest protocol. */
+  /** The eight largest categories, each with its row count, median and strongest protocol. */
   function categoryPanel() {
     var cats = DATA.categories || [];
     if (cats.length === 0) return null;
     return el('section', { class: 'panel model', 'aria-label': 'Categories' },
       el('h2', { text: 'Where the board is concentrated' }),
-      el('p', { class: 'sub', text: 'The eight largest categories on the board. Pick one to open its strongest protocol, or filter the table by it.' }),
+      el('p', { class: 'sub', text: 'The eight largest categories on the board. Pick one to open its strongest protocol, or filter the table by it. The median is the typical row in the category, so a category whose strongest row is far above its median is carried by one name.' }),
       el('div', { class: 'cats' }, cats.map(function (c) {
         return el('button', {
           type: 'button', class: 'cat-card',
           onclick: function () { openDetail(c.top_slug); }
         },
           el('b', { text: c.category }),
-          el('span', { class: 'sub', text: c.rows + (c.rows === 1 ? ' row' : ' rows') }),
+          el('span', { class: 'sub', text: c.rows + (c.rows === 1 ? ' row' : ' rows') + ' · median ' + money(c.median_implied_usd) }),
           el('span', { class: 'cat-top', text: 'Strongest: ' + c.top_name }),
           el('span', { class: 'num', text: money(c.top_implied_usd) })
         );
@@ -388,6 +425,7 @@
     dialog.textContent = '';
     var steps = farmSteps(row);
     var recomputed = impliedOf(row, DATA.model);
+    var comps = compsOf(row);
     dialog.appendChild(el('div', { class: 'detail-head' },
       el('div', null,
         el('span', { class: 'brand-name', text: 'Rank ' + row.rank + ' of ' + DATA.board_size + ' · ' + (row.on_watchlist ? 'watchlist' : 'early radar') }),
@@ -400,13 +438,16 @@
       el('h3', { text: 'Implied value' }),
       el('div', { class: 'equation' },
         el('div', null, el('span', { text: 'TVL' }), el('b', { class: 'num', text: money(row.tvl_usd) })),
-        el('div', null, el('span', { text: 'Category multiple' }), el('b', { class: 'num', text: multipleOf(row).toFixed(2) + 'x' })),
+        el('div', null, el('span', { text: 'Category multiple' + (comps !== null ? ' (n=' + comps + ' live)' : '') }), el('b', { class: 'num', text: multipleOf(row).toFixed(2) + 'x' })),
         el('div', null, el('span', { text: 'Seven-day growth' }), el('b', { class: 'num', text: pct(row.change_7d) })),
         el('div', null, el('span', { text: 'Age with no token' }), el('b', { class: 'num', text: ageLabel(row.age_days) })),
+        el('div', null, el('span', { text: 'Chains' }), el('b', { class: 'num', text: String((row.chains || []).length) })),
         el('div', null, el('span', { text: 'Growth multiplier' }), el('b', { class: 'num', text: String(row.growth_multiplier) })),
         el('div', null, el('span', { text: 'Maturity multiplier' }), el('b', { class: 'num', text: String(row.maturity_multiplier) })),
+        el('div', null, el('span', { text: 'Chain multiplier' }), el('b', { class: 'num', text: String(row.chain_multiplier) })),
         el('div', null, el('span', { text: 'Implied value' }), el('b', { class: 'num', text: money(row.implied_value_usd) }))
       ),
+      el('p', { class: 'sub', text: whyRank(row) }),
       el('p', { class: 'sub', text: 'Model ' + DATA.model_version + ': the same function scores every protocol. The page recomputes this row as ' + money(recomputed) + (recomputed === row.implied_value_usd ? ', the same number board.json carries.' : ', which differs from the board: the data would be stale.') + ' This is an estimate, not a price.' })
     ));
     dialog.appendChild(el('section', { class: 'detail-section' },
