@@ -130,6 +130,17 @@ tbody tr[data-selected="true"] { background: var(--accent-soft); }
 .mults { display: flex; flex-wrap: wrap; gap: 8px; margin-top: var(--step-1); }
 .mult { font-family: var(--font-num); font-size: 12px; padding: 3px 8px; border: 1px solid var(--border); border-radius: 999px; background: var(--canvas); }
 
+/* The eight largest categories, as cards under the table. */
+.cats { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: var(--step-3); }
+.cat-card {
+  display: grid; gap: 2px; text-align: left; padding: var(--step-4);
+  background: var(--canvas); border: 1px solid var(--border); border-radius: var(--radius-control);
+}
+.cat-card:hover { border-color: var(--accent); }
+.cat-card b { font-size: 14px; }
+.cat-top { font-size: 13px; }
+.cat-card .num { text-align: left; font-size: 14px; font-weight: 700; }
+
 .detail { border: 1px solid var(--border); border-radius: var(--radius-panel); padding: 0; max-width: 720px; width: calc(100vw - 32px); }
 .detail::backdrop { background: rgba(20, 32, 27, 0.45); }
 .detail-head { display: flex; justify-content: space-between; gap: var(--step-4); padding: var(--step-5); border-bottom: 1px solid var(--border); }

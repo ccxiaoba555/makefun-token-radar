@@ -356,6 +356,27 @@
     );
   }
 
+  /** The eight largest categories, each with its row count and its strongest protocol. */
+  function categoryPanel() {
+    var cats = DATA.categories || [];
+    if (cats.length === 0) return null;
+    return el('section', { class: 'panel model', 'aria-label': 'Categories' },
+      el('h2', { text: 'Where the board is concentrated' }),
+      el('p', { class: 'sub', text: 'The eight largest categories on the board. Pick one to open its strongest protocol, or filter the table by it.' }),
+      el('div', { class: 'cats' }, cats.map(function (c) {
+        return el('button', {
+          type: 'button', class: 'cat-card',
+          onclick: function () { openDetail(c.top_slug); }
+        },
+          el('b', { text: c.category }),
+          el('span', { class: 'sub', text: c.rows + (c.rows === 1 ? ' row' : ' rows') }),
+          el('span', { class: 'cat-top', text: 'Strongest: ' + c.top_name }),
+          el('span', { class: 'num', text: money(c.top_implied_usd) })
+        );
+      }))
+    );
+  }
+
   var dialog = el('dialog', { class: 'detail', id: 'detail', 'aria-labelledby': 'detail-title' });
   dialog.addEventListener('close', function () { state.selected = null; writeHash(); });
 
@@ -412,7 +433,10 @@
     if (state.tab === 'pre-token') shell.appendChild(topFive());
     shell.appendChild(controls());
     shell.appendChild(state.tab === 'pre-token' ? boardTable() : liveTable());
-    if (state.tab === 'pre-token') shell.appendChild(modelPanel());
+    if (state.tab === 'pre-token') {
+      shell.appendChild(categoryPanel());
+      shell.appendChild(modelPanel());
+    }
     mount.appendChild(shell);
     mount.setAttribute('aria-busy', 'false');
     if (!dialog.isConnected) mount.appendChild(dialog);

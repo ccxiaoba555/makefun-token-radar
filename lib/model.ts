@@ -147,6 +147,15 @@ export interface LiveRow {
   change_7d: number | null;
 }
 
+/** One category's summary for the dashboard: how many rows it has and its strongest protocol. */
+export interface CategorySummary {
+  category: string;
+  rows: number;
+  top_slug: string;
+  top_name: string;
+  top_implied_usd: number;
+}
+
 /** Everything the dashboard renders: the board, the live set, and the model that scored them. */
 export interface RadarData {
   as_of: string;
@@ -155,6 +164,7 @@ export interface RadarData {
   model: ModelConstants;
   model_version: string;
   category_multiples: Record<string, number>;
+  categories: CategorySummary[];
   watchlist_size: number;
   board_size: number;
   early_size: number;
@@ -467,6 +477,24 @@ export function radarRow(row: BoardRow, watchlist: Set<string>): RadarRow {
   };
 }
 
+/** Per-category summaries for the dashboard: rows per category and each one's strongest row. */
+export function categorySummaries(board: BoardRow[]): CategorySummary[] {
+  const byCat = new Map<string, BoardRow[]>();
+  for (const r of board) {
+    const key = r.category ?? 'Other';
+    const list = byCat.get(key) ?? [];
+    list.push(r);
+    byCat.set(key, list);
+  }
+  return [...byCat.entries()]
+    .map(([category, rows]) => {
+      const top = rows[0]!;
+      return { category, rows: rows.length, top_slug: top.slug, top_name: top.name, top_implied_usd: top.implied_value_usd };
+    })
+    .sort((a, b) => b.rows - a.rows || b.top_implied_usd - a.top_implied_usd)
+    .slice(0, 8);
+}
+
 /** Everything the dashboard renders, from the snapshot. */
 export function buildRadar(snapshot: Snapshot, model: ModelConstants = MODEL): { board: BoardRow[]; radar: RadarData } {
   const multiples = categoryMultiples(snapshot, model);
@@ -480,6 +508,7 @@ export function buildRadar(snapshot: Snapshot, model: ModelConstants = MODEL): {
     model,
     model_version: MODEL_VERSION,
     category_multiples: Object.fromEntries(multiples),
+    categories: categorySummaries(board),
     watchlist_size: snapshot.watchlist.length,
     board_size: board.length,
     early_size: early,
