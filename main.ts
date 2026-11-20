@@ -1,4 +1,4 @@
-// Token Radar, radar-4 entry (Node 22, standard library only).
+// Token Radar, radar-5 entry (Node 22, standard library only).
 //
 // Run it against a sealed snapshot and it scores every pre-token protocol with the model in
 // lib/model.ts, then writes the ranked board, the dashboard data, the dashboard itself, the

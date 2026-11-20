@@ -1,4 +1,4 @@
-// Token Radar's model, radar-4: one snapshot of the protocol universe in, one ranked board out.
+// Token Radar's model, radar-5: one snapshot of the protocol universe in, one ranked board out.
 //
 // The board's floor is the watchlist: every slug in it is ranked. Below the floor, the early
 // radar adds pre-token protocols by TVL, up to EARLY_ROWS. A protocol is pre-token when its
@@ -26,6 +26,10 @@
 //              otherwise: a row scored on missing data is worth slightly less than one
 //              scored on a full record, and the dashboard says so on the row.
 //   implied    max(1, round(base x growthMult x maturity x chains x quality))
+//   range      the same product with the category multiple replaced by the winsorise
+//              bounds, MULT_MIN and MULT_MAX: a point estimate hides how wide the
+//              category's own pricing is, so every row also carries its low and high
+//              implied value, and the dashboard shows the band on the row.
 //
 // A single flat multiple would let the biggest TVL in the cheapest category win by default.
 // The snapshot itself says categories do not trade alike: before winsorising, the live-token
@@ -40,6 +44,12 @@
 // check and a second-chain repeat, the two steps farmers most often skip; and the dashboard
 // now prints the live-comparable count behind every category multiple, so a multiple resting
 // on 2 protocols is not mistaken for one resting on 20.
+//
+// What radar-5 changes over radar-4: every row now carries an implied-value range — the
+// same product with the category multiple replaced by its winsorise bounds (0.10 and
+// 0.45) — because a point estimate hides how wide the category's own pricing is; a
+// category priced at 0.25 with bounds 0.10–0.45 is a much wider bet than one priced at
+// 0.40. The dashboard shows the band on each row's detail dialog.
 //
 // What radar-4 changes over radar-3: the category multiple is now a TVL-weighted median
 // instead of a plain median, so a category is priced by the protocols that hold its money
@@ -102,7 +112,7 @@ export const MODEL: ModelConstants = {
 };
 
 /** The model's version label: the dashboard names it. */
-export const MODEL_VERSION = 'radar-4';
+export const MODEL_VERSION = 'radar-5';
 
 /** The winsorising band for a category multiple, and how many live comparables earn one. */
 export const MULT_MIN = 0.1;
@@ -138,6 +148,8 @@ export interface BoardRow {
   token_status: 'pre-token';
   age_days: number | null;
   implied_value_usd: number;
+  implied_low_usd: number;
+  implied_high_usd: number;
   model: {
     base_multiple: number;
     growth_pct: number;
@@ -356,7 +368,7 @@ export function impliedValue(
   asOf: string,
   model: ModelConstants,
   multiples?: Map<string, number>,
-): { implied: number; growthPct: number; growthMult: number; maturityMult: number; chainMult: number; qualityMult: number; age: number | null; multiple: number } {
+): { implied: number; low: number; high: number; growthPct: number; growthMult: number; maturityMult: number; chainMult: number; qualityMult: number; age: number | null; multiple: number } {
   const age = ageDays(asOf, protocol.listed_at);
   const growthPct = Math.min(model.growth_cap, Math.max(model.growth_floor, numOr(protocol.change_7d, 0)));
   const growthMult = 1 + (growthPct / 100) * model.growth_weight;
@@ -367,7 +379,9 @@ export function impliedValue(
   const qualityMult = protocol.change_7d === null ? model.data_quality_discount : 1;
   const multiple = multiples === undefined ? model.base_multiple : multipleFor(protocol, multiples, model);
   const implied = Math.max(1, Math.round(protocol.tvl_usd * multiple * growthMult * maturityMult * chainMult * qualityMult));
-  return { implied, growthPct, growthMult, maturityMult, chainMult, qualityMult, age, multiple };
+  const low = Math.max(1, Math.round(protocol.tvl_usd * MULT_MIN * growthMult * maturityMult * chainMult * qualityMult));
+  const high = Math.max(1, Math.round(protocol.tvl_usd * MULT_MAX * growthMult * maturityMult * chainMult * qualityMult));
+  return { implied, low, high, growthPct, growthMult, maturityMult, chainMult, qualityMult, age, multiple };
 }
 
 /** The snapshot's protocol by slug. */
@@ -546,6 +560,8 @@ export function buildBoard(snapshot: Snapshot, model: ModelConstants = MODEL): B
     token_status: 'pre-token',
     age_days: s.age,
     implied_value_usd: s.implied,
+    implied_low_usd: s.low,
+    implied_high_usd: s.high,
     model: {
       base_multiple: s.multiple,
       growth_pct: s.growthPct,
@@ -596,6 +612,8 @@ export function radarRow(row: BoardRow, watchlist: Set<string>): RadarRow {
     maturity_multiplier: row.model.maturity_multiplier,
     chain_multiplier: row.model.chain_multiplier,
     data_quality_multiplier: row.model.data_quality_multiplier,
+    implied_low_usd: row.implied_low_usd,
+    implied_high_usd: row.implied_high_usd,
   };
 }
 

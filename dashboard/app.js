@@ -1,4 +1,4 @@
-// Token Radar's dashboard, radar-4. It reads window.RADAR (written beside dashboard/ by
+// Token Radar's dashboard, radar-5. It reads window.RADAR (written beside dashboard/ by
 // main.ts) and renders the ranked board, a filterable table, a top-five strip, a per-protocol
 // detail dialog with the model's own inputs and the protocol's farm plan, and the live-token
 // view. No network: every byte it shows is in data.js. No framework, no fetch.
@@ -472,7 +472,9 @@
         el('div', null, el('span', { text: 'Maturity multiplier' }), el('b', { class: 'num', text: String(row.maturity_multiplier) })),
         el('div', null, el('span', { text: 'Chain multiplier' }), el('b', { class: 'num', text: String(row.chain_multiplier) })),
         el('div', null, el('span', { text: 'Data quality' }), el('b', { class: 'num', text: String(row.data_quality_multiplier) + (row.change_7d === null ? ' — no seven-day change on record' : '') })),
-        el('div', null, el('span', { text: 'Implied value' }), el('b', { class: 'num', text: money(row.implied_value_usd) }))
+        el('div', null, el('span', { text: 'Implied value' }), el('b', { class: 'num', text: money(row.implied_value_usd) })),
+        el('div', null, el('span', { text: 'Implied range' }), el('b', { class: 'num', text: money(row.implied_low_usd) + ' – ' + money(row.implied_high_usd) })),
+        el('p', { class: 'sub', text: 'The range is the same model with the category multiple replaced by its winsorise bounds (0.10–0.45): a point estimate hides how wide the category\u2019s own pricing is. A row priced at 0.25 with a $100M–$450M band is a wider bet than one priced at 0.40 with a $320M–$450M band.' }),
       ),
       el('p', { class: 'sub', text: whyRank(row) }),
       el('p', { class: 'sub', text: 'Model ' + DATA.model_version + ': the same function scores every protocol. The page recomputes this row as ' + money(recomputed) + (recomputed === row.implied_value_usd ? ', the same number board.json carries.' : ', which differs from the board: the data would be stale.') + ' This is an estimate, not a price.' })

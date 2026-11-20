@@ -8,7 +8,7 @@ A token radar for pre-token protocols: it reads a sealed DefiLlama snapshot, ran
 watchlist protocol by implied value, adds the early radar below the watchlist floor, and
 renders a static dashboard with a per-protocol farm plan. Node 22, standard library only.
 
-## The model (radar-4)
+## The model (radar-5)
 
 Implied value is computed from the snapshot's own figures only:
 
@@ -42,7 +42,7 @@ Three judgements sit inside that one line, and the dashboard states all three:
 No protocol name is ever special-cased: the same function scores every row.
 
 The board covers all 40 watchlist protocols plus 186 early rows below the $50M floor
-(226 rows), each with a 12-step farm plan derived from its category, chains, TVL and age —
+(226 rows), each with a 12-step farm plan and an implied-value range (the same model at the category multiple's winsorise bounds, 0.10–0.45) derived from its category, chains, TVL and age —
 including a verify-before-you-deposit step, an audit check, a points-program check, a
 second-chain repeat for multi-chain protocols, and an exit plan in tranches. Live-token
 protocols are set aside with their market caps shown, never mixed into the ranking. Every
